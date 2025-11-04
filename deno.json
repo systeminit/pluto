@@ -1,0 +1,16 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys src/main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys src/main.ts"
+  },
+  "imports": {
+    "@aws-sdk/client-dynamodb": "npm:@aws-sdk/client-dynamodb@^3.450.0",
+    "@aws-sdk/credential-providers": "npm:@aws-sdk/credential-providers@^3.450.0",
+    "@hono/hono": "https://deno.land/x/hono@v3.9.0/mod.ts",
+    "@std/dotenv": "https://deno.land/std@0.204.0/dotenv/mod.ts"
+  },
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "strict": true
+  }
+}

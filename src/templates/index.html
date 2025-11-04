@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pluto App</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        h1 { 
+            color: white; 
+            text-align: center; 
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, textarea, select { 
+            width: 100%; 
+            padding: 10px; 
+            border: 1px solid #ddd; 
+            border-radius: 4px; 
+        }
+        button { 
+            background: #007cba; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            margin: 5px;
+        }
+        button:hover { background: #005a87; }
+        
+        .config-section { 
+            background: white; 
+            padding: 20px; 
+            margin: 20px 0; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        
+        #status {
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .timeline {
+            position: relative;
+            margin: 15px 0;
+            padding: 0;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, #e9ecef 0%, #dee2e6 100%);
+            border-radius: 1px;
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-start;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: slideInUp 0.3s ease forwards;
+        }
+        
+        .timeline-item:nth-child(1) { animation-delay: 0.05s; }
+        .timeline-item:nth-child(2) { animation-delay: 0.1s; }
+        .timeline-item:nth-child(3) { animation-delay: 0.15s; }
+        .timeline-item:nth-child(4) { animation-delay: 0.2s; }
+        .timeline-item:nth-child(5) { animation-delay: 0.25s; }
+        
+        .timeline-marker {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            font-size: 14px;
+            margin-right: 15px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.2s ease;
+        }
+        
+        .timeline-item.pending .timeline-marker {
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            color: #6c757d;
+            border: 3px solid #dee2e6;
+        }
+        
+        .timeline-item.in_progress .timeline-marker {
+            background: linear-gradient(135deg, #007cba, #0056b3);
+            animation: progressPulse 1.5s ease-in-out infinite;
+            transform: scale(1.05);
+        }
+        
+        .timeline-item.completed .timeline-marker {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+        
+        .timeline-item.failed .timeline-marker {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+        }
+        
+        .timeline-content {
+            flex: 1;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            border-left: 3px solid #e9ecef;
+            transition: all 0.2s ease;
+        }
+        
+        .timeline-item.pending .timeline-content {
+            border-left-color: #dee2e6;
+        }
+        
+        .timeline-item.in_progress .timeline-content {
+            border-left-color: #007cba;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        }
+        
+        .timeline-item.completed .timeline-content {
+            border-left-color: #28a745;
+        }
+        
+        .timeline-item.failed .timeline-content {
+            border-left-color: #dc3545;
+        }
+        
+        .timeline-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #2c3e50;
+        }
+        
+        .timeline-message {
+            color: #555;
+            font-size: 13px;
+            line-height: 1.4;
+            margin-bottom: 6px;
+        }
+        
+        .timeline-timestamp {
+            color: #888;
+            font-size: 11px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+        }
+        
+        .timeline-timestamp::before {
+            content: '🕒';
+            margin-right: 6px;
+        }
+        
+        @keyframes slideInUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes progressPulse {
+            0%, 100% { 
+                transform: scale(1.05);
+                box-shadow: 0 2px 4px rgba(0,124,186,0.2);
+            }
+            50% { 
+                transform: scale(1.1);
+                box-shadow: 0 3px 8px rgba(0,124,186,0.3);
+            }
+        }
+        
+        /* Step icons */
+        .timeline-item.pending .timeline-marker::before { content: "⏳"; }
+        .timeline-item.in_progress .timeline-marker::before { content: "⚡"; }
+        .timeline-item.completed .timeline-marker::before { content: "✅"; }
+        .timeline-item.failed .timeline-marker::before { content: "❌"; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Pluto App</h1>
+    
+    <div id="config-tab">
+        <div class="config-section">
+            <h2>Tenant Configuration</h2>
+            <p><strong>Note:</strong> AWS credentials and Workspace API token are configured via environment variables.</p>
+            
+            <div class="form-group">
+                <label>Configuration Name (optional):</label>
+                <input type="text" id="configName" placeholder="Production Config">
+                <small>If specified, will overwrite existing config with same name</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Root OU/Tree Branch:</label>
+                <input type="text" id="rootOu" placeholder="ou-root-123456789" value="ou-ts96-cagfequl">
+            </div>
+            
+            <div class="form-group">
+                <label>Email List (comma-separated):</label>
+                <textarea id="emailList" rows="3" placeholder="admin@company.com, user1@company.com">aaron@systeminit.com</textarea>
+            </div>
+        </div>
+
+        <div class="config-section">
+            <h2>Actions</h2>
+            <button onclick="testConnection()">Test AWS Connection</button>
+            <button onclick="testDynamoDB()">Test DynamoDB</button>
+            <button onclick="saveConfig()">Save Configuration</button>
+        </div>
+
+        <div class="config-section">
+            <h2>Deploy Tenant</h2>
+            <div class="form-group">
+                <label>Select Configuration:</label>
+                <select id="configSelect">
+                    <option value="">Loading configurations...</option>
+                </select>
+                <button onclick="loadConfigurations()" style="margin-top: 10px;">Refresh Configurations</button>
+            </div>
+            <button onclick="deployTenant()">Deploy Selected Configuration</button>
+            
+            <!-- Deployment Progress Timeline -->
+            <div id="deploymentProgress" style="margin-top: 20px; display: none;">
+                <h3>Deployment Progress</h3>
+                <div id="progressTimeline" class="timeline"></div>
+            </div>
+        </div>
+
+        <div class="config-section">
+            <h2>Configuration Table Data</h2>
+            <button onclick="loadConfigData()">Load Configuration Data</button>
+            <button onclick="pruneDatabase()">Prune All Tables</button>
+            <div id="configTableData" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="config-section">
+            <h2>Sensitive Data Table</h2>
+            <button onclick="loadSensitiveData()">Load Sensitive Data</button>
+            <div id="sensitiveTableData" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="config-section">
+            <h2>Tenant Deployment History</h2>
+            <button onclick="loadTenantDeployments()">Load Deployment History</button>
+            <div id="tenantDeploymentsData" style="margin-top: 15px;"></div>
+        </div>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.display = 'block';
+            
+            if (type === 'error') {
+                status.style.backgroundColor = '#ffebee';
+                status.style.color = '#c62828';
+            } else if (type === 'success') {
+                status.style.backgroundColor = '#e8f5e8';
+                status.style.color = '#2e7d32';
+            } else {
+                status.style.backgroundColor = '#e3f2fd';
+                status.style.color = '#1565c0';
+            }
+        }
+
+        async function testConnection() {
+            showStatus('Testing AWS connection...', 'info');
+            try {
+                const response = await fetch('/api/test-aws', { method: 'POST' });
+                const result = await response.json();
+                showStatus(result.success ? 'AWS connection successful!' : 'AWS connection failed: ' + result.error, 
+                          result.success ? 'success' : 'error');
+            } catch (e) {
+                showStatus('Error testing connection: ' + e.message, 'error');
+            }
+        }
+
+        async function testDynamoDB() {
+            showStatus('Testing DynamoDB connection...', 'info');
+            try {
+                const response = await fetch('/api/test-dynamodb', { method: 'POST' });
+                const result = await response.json();
+                showStatus(result.success ? 'DynamoDB connection successful!' : 'DynamoDB connection failed: ' + result.error, 
+                          result.success ? 'success' : 'error');
+            } catch (e) {
+                showStatus('Error testing DynamoDB: ' + e.message, 'error');
+            }
+        }
+
+        async function saveConfig() {
+            showStatus('Saving configuration...', 'info');
+            try {
+                const response = await fetch('/api/save-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        configName: document.getElementById('configName').value.trim(),
+                        rootOu: document.getElementById('rootOu').value,
+                        emails: document.getElementById('emailList').value.split(',').map(e => e.trim()).filter(e => e)
+                    })
+                });
+                const result = await response.json();
+                showStatus(result.success ? 'Configuration saved!' : 'Save failed: ' + result.error, 
+                          result.success ? 'success' : 'error');
+                
+                if (result.success) {
+                    loadConfigurations();
+                }
+            } catch (e) {
+                showStatus('Error saving config: ' + e.message, 'error');
+            }
+        }
+
+        function updateProgressTimeline(progressData) {
+            const timelineDiv = document.getElementById('progressTimeline');
+            const progressSection = document.getElementById('deploymentProgress');
+            
+            if (progressData && progressData.length > 0) {
+                progressSection.style.display = 'block';
+                
+                let html = '';
+                progressData.forEach((item, index) => {
+                    const stepTitle = item.step.charAt(0).toUpperCase() + item.step.slice(1);
+                    const timestamp = new Date(item.timestamp).toLocaleTimeString();
+                    
+                    html += '<div class="timeline-item ' + item.status + '">';
+                    html += '  <div class="timeline-marker"></div>';
+                    html += '  <div class="timeline-content">';
+                    html += '    <div class="timeline-title">' + stepTitle + '</div>';
+                    html += '    <div class="timeline-message">' + item.message + '</div>';
+                    html += '    <div class="timeline-timestamp">' + timestamp + '</div>';
+                    html += '  </div>';
+                    html += '</div>';
+                });
+                
+                timelineDiv.innerHTML = html;
+            } else {
+                progressSection.style.display = 'none';
+            }
+        }
+
+        async function deployTenant() {
+            const selectedConfigId = document.getElementById('configSelect').value;
+            if (!selectedConfigId) {
+                showStatus('Please select a configuration first', 'error');
+                return;
+            }
+
+            // Request account name from user
+            const accountName = prompt('Enter the account name for the AWS Organizations Account:');
+            if (!accountName || !accountName.trim()) {
+                showStatus('Account name is required for deployment', 'error');
+                return;
+            }
+
+            // Clear previous progress and show timeline
+            updateProgressTimeline([]);
+            const progressSection = document.getElementById('deploymentProgress');
+            progressSection.style.display = 'block';
+            
+            showStatus('Starting tenant deployment...', 'info');
+
+            try {
+                // Start deployment
+                const response = await fetch('/api/deploy-tenant/start', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        configId: selectedConfigId,
+                        accountName: accountName.trim()
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to start deployment');
+                }
+                
+                const { deploymentId } = await response.json();
+                
+                // Poll for progress updates
+                const pollInterval = 2000; // 2 seconds
+                let isComplete = false;
+                
+                while (!isComplete) {
+                    try {
+                        const progressResponse = await fetch('/api/deploy-tenant/progress/' + deploymentId);
+                        if (!progressResponse.ok) {
+                            throw new Error('Failed to fetch progress');
+                        }
+                        
+                        const progressData = await progressResponse.json();
+                        updateProgressTimeline(progressData.progress);
+                        
+                        // Check if deployment is complete or failed
+                        if (progressData.completed) {
+                            isComplete = true;
+                            showStatus(progressData.deploymentSuccess ? 'Tenant deployed successfully!' : 'Deploy failed: ' + progressData.error, 
+                                      progressData.deploymentSuccess ? 'success' : 'error');
+                        }
+                        
+                        if (!isComplete) {
+                            await new Promise(resolve => setTimeout(resolve, pollInterval));
+                        }
+                    } catch (pollError) {
+                        console.error('Error polling progress:', pollError);
+                        await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    }
+                }
+                
+            } catch (e) {
+                showStatus('Error deploying tenant: ' + e.message, 'error');
+                updateProgressTimeline([{
+                    step: 'error',
+                    status: 'failed',
+                    message: 'Deployment failed: ' + e.message,
+                    timestamp: new Date().toISOString()
+                }]);
+            }
+        }
+
+        async function loadConfigurations() {
+            const select = document.getElementById('configSelect');
+            select.innerHTML = '<option value="">Loading...</option>';
+            
+            try {
+                const response = await fetch('/api/dynamodb-data');
+                const result = await response.json();
+                
+                if (result.success && result.data && result.data.length > 0) {
+                    select.innerHTML = '<option value="">Select a configuration...</option>';
+                    
+                    result.data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                    
+                    result.data.forEach(config => {
+                        const option = document.createElement('option');
+                        option.value = config.id;
+                        const dateStr = new Date(config.createdAt).toLocaleString();
+                        const nameStr = config.name || 'Unnamed Config';
+                        const emailsStr = config.workspace && config.workspace.emails ? config.workspace.emails.join(', ') : 'No emails';
+                        option.textContent = nameStr + ' (' + dateStr + ') - ' + (config.workspace && config.workspace.rootOu ? config.workspace.rootOu : 'No Root OU') + ' - ' + emailsStr;
+                        select.appendChild(option);
+                    });
+                } else {
+                    select.innerHTML = '<option value="">No configurations found</option>';
+                }
+            } catch (error) {
+                select.innerHTML = '<option value="">Error loading configurations</option>';
+                console.error('Error loading configurations:', error);
+            }
+        }
+
+        async function loadConfigData() {
+            const dataDiv = document.getElementById('configTableData');
+            dataDiv.innerHTML = 'Loading configuration data...';
+            
+            try {
+                const response = await fetch('/api/dynamodb-data');
+                const result = await response.json();
+                
+                if (result.success && result.data && result.data.length > 0) {
+                    let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+                    html += '<tr style="background: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px;">ID</th><th style="border: 1px solid #ddd; padding: 8px;">Name</th><th style="border: 1px solid #ddd; padding: 8px;">Root OU</th><th style="border: 1px solid #ddd; padding: 8px;">Emails</th><th style="border: 1px solid #ddd; padding: 8px;">Created At</th></tr>';
+                    
+                    result.data.forEach(config => {
+                        const emails = config.workspace && config.workspace.emails ? config.workspace.emails.join(', ') : 'None';
+                        const rootOu = config.workspace && config.workspace.rootOu ? config.workspace.rootOu : 'None';
+                        const name = config.name || 'Unnamed';
+                        html += '<tr>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + config.id + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + name + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + rootOu + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + emails + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + new Date(config.createdAt).toLocaleString() + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</table>';
+                    dataDiv.innerHTML = html;
+                } else {
+                    dataDiv.innerHTML = 'No configuration data found.';
+                }
+            } catch (error) {
+                dataDiv.innerHTML = 'Error loading configuration data: ' + error.message;
+                console.error('Error loading config data:', error);
+            }
+        }
+
+        async function loadSensitiveData() {
+            const dataDiv = document.getElementById('sensitiveTableData');
+            dataDiv.innerHTML = 'Loading sensitive data...';
+            
+            try {
+                const response = await fetch('/api/sensitive-data');
+                const result = await response.json();
+                
+                if (result.success && result.data && result.data.length > 0) {
+                    let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+                    html += '<tr style="background: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px;">Workspace ID</th><th style="border: 1px solid #ddd; padding: 8px;">Token (Masked)</th><th style="border: 1px solid #ddd; padding: 8px;">Created At</th></tr>';
+                    
+                    result.data.forEach(item => {
+                        const maskedToken = item.token ? item.token.substring(0, 8) + '...' : 'None';
+                        html += '<tr>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + (item.workspaceId || 'Unknown') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + maskedToken + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + new Date(item.createdAt).toLocaleString() + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</table>';
+                    dataDiv.innerHTML = html;
+                } else {
+                    dataDiv.innerHTML = 'No sensitive data found.';
+                }
+            } catch (error) {
+                dataDiv.innerHTML = 'Error loading sensitive data: ' + error.message;
+                console.error('Error loading sensitive data:', error);
+            }
+        }
+
+        async function pruneDatabase() {
+            if (!confirm('Are you sure you want to delete all data from both DynamoDB tables? This action cannot be undone.')) {
+                return;
+            }
+            
+            showStatus('Pruning database...', 'info');
+            try {
+                const response = await fetch('/api/prune-database', { method: 'POST' });
+                const result = await response.json();
+                showStatus(result.success ? 'Database pruned successfully!' : 'Prune failed: ' + result.error, 
+                          result.success ? 'success' : 'error');
+                
+                if (result.success) {
+                    loadConfigurations();
+                    loadConfigData();
+                    loadSensitiveData();
+                }
+            } catch (e) {
+                showStatus('Error pruning database: ' + e.message, 'error');
+            }
+        }
+
+        function loadTenantDeployments() {
+            const dataDiv = document.getElementById('tenantDeploymentsData');
+            dataDiv.innerHTML = 'Tenant deployment history viewing is temporarily disabled. The audit data is still being recorded in the database.';
+        }
+
+        window.addEventListener('load', function() {
+            loadConfigurations();
+        });
+    </script>
+</body>
+</html>

@@ -52,10 +52,14 @@ export class DeploymentService {
 
   async createChangeSet(name: string): Promise<{ success: boolean; changeSetId?: string; error?: string }> {
     try {
+      const requestBody = { changeSetName: name };
+      console.log(`createChangeSet request body:`, JSON.stringify(requestBody));
+      console.log(`API URL: ${this.apiUrl}/v1/w/${this.workspaceId}/change-sets`);
+      
       const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets`, {
         method: 'POST',
         headers: this.headers,
-        body: JSON.stringify({ changeSetName: name })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
@@ -238,6 +242,7 @@ export class DeploymentService {
 
       // Step 2: Create changeset
       await updateProgress('changeset', 'in_progress', 'Creating change set...');
+      console.log(`Creating changeset with name: "${changeSetName}" (length: ${changeSetName.length})`);
       const createResult = await this.createChangeSet(changeSetName);
       if (!createResult.success) {
         await updateProgress('changeset', 'failed', `Failed to create change set: ${createResult.error}`);
@@ -280,7 +285,31 @@ export class DeploymentService {
       }
       await updateProgress('component', 'completed', `AWS Account component created: ${componentResult.componentId}`);
 
-      // Step 4: Skip apply for review (as requested)
+      // Step 4: Create Workspace Management component
+      await updateProgress('workspace', 'in_progress', 'Creating Workspace Management component...');
+      const workspaceResult = await this.createComponent(changeSetId, 'Workspace Management', `${accountName}-workspace`, {
+        attributes: {
+          "/domain/displayName": accountName,
+          "/domain/description": `System Initiative workspace for ${accountName} tenant - automated deployment`,
+          "/domain/instanceUrl": "https://app.systeminit.com",
+          "/domain/isDefault": false,
+          "/secrets/SI Credential": {
+            "$source": {
+              "component": "Pluto API Token",
+              "path": "/secrets/SI Credential"
+            }
+          }
+        },
+        viewName: "Tenants"
+      });
+      
+      if (!workspaceResult.success) {
+        await updateProgress('workspace', 'failed', `Failed to create workspace component: ${workspaceResult.error}`);
+        return { success: false, error: workspaceResult.error, changeSetId, progress };
+      }
+      await updateProgress('workspace', 'completed', `Workspace component created: ${workspaceResult.componentId}`);
+
+      // Step 5: Skip apply for review (as requested)
       await updateProgress('review', 'completed', 'Change set ready for review - apply skipped as requested');
 
       // Success - changeset created but not applied

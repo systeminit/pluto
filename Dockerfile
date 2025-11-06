@@ -1,4 +1,4 @@
-FROM denoland/deno:1.38.3
+FROM denoland/deno:latest
 
 # Create app directory and set permissions
 WORKDIR /app

@@ -594,18 +594,25 @@ export class DynamoDBService {
         return [];
       }
 
-      return result.Items.map(item => ({
-        deploymentId: item.deploymentId.S!,
-        configId: item.configId?.S || '',
-        configData: item.configData?.S ? JSON.parse(item.configData.S) : {},
-        status: item.status?.S || '',
-        currentStep: item.currentStep?.S || '',
-        startTime: item.startTime?.S || '',
-        endTime: item.endTime?.S,
-        lastUpdated: item.lastUpdated?.S || '',
-        error: item.error?.S,
-        stepsCount: item.steps?.L?.length || 0
-      })).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+      return result.Items.map(item => {
+        const steps = item.steps?.L || [];
+        const latestStep = steps.length > 0 ? steps[steps.length - 1].M : null;
+        const latestMessage = latestStep?.message?.S || item.error?.S || 'No message available';
+        
+        return {
+          deploymentId: item.deploymentId.S!,
+          configId: item.configId?.S || '',
+          configData: item.configData?.S ? JSON.parse(item.configData.S) : {},
+          status: item.status?.S || '',
+          currentStep: item.currentStep?.S || '',
+          startTime: item.startTime?.S || '',
+          endTime: item.endTime?.S || '',
+          lastUpdated: item.lastUpdated?.S || item.timestamp?.S || '',
+          error: item.error?.S || '',
+          message: latestMessage,
+          stepsCount: steps.length
+        };
+      }).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     } catch (error) {
       console.error("Error getting all tenant deployments:", error);
       return [];

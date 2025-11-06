@@ -13,8 +13,6 @@ services:
       - WORKSPACE_API_BASE_URL=${WORKSPACE_API_BASE_URL:-https://api.workspace.example.com}
       - SI_WORKSPACE_ID=${SI_WORKSPACE_ID}
       - WORKSPACE_API_TOKEN=${WORKSPACE_API_TOKEN}
-    depends_on:
-      - dynamodb-local
     volumes:
       - .:/app
       - /app/node_modules

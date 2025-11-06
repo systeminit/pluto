@@ -1,38 +1,24 @@
-export interface DeploymentProgress {
-  step: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  message: string;
-  timestamp: string;
-  details?: any;
-}
+import { DeploymentProgress, DeploymentResult } from "./types.ts";
 
-export interface DeploymentResult {
-  success: boolean;
-  error?: string;
-  changeSetId?: string;
-  deploymentId?: string;
-  progress: DeploymentProgress[];
-}
-
+// Re-export types for backward compatibility
+export type { DeploymentProgress, DeploymentResult } from "./types.ts";
 import { DynamoDBService } from "./dynamodb.ts";
+import { ChangeSetService } from "./changeset.ts";
+import { ComponentService } from "./component.ts";
 
 export class DeploymentService {
-  private apiUrl = "https://api.systeminit.com";
   private workspaceId: string;
-  private apiToken: string;
   private dynamoService: DynamoDBService;
+  private changeSetService: ChangeSetService;
+  private componentService: ComponentService;
   
   constructor(workspaceId: string, apiToken: string, dynamoService?: DynamoDBService) {
     this.workspaceId = workspaceId;
-    this.apiToken = apiToken;
     this.dynamoService = dynamoService || new DynamoDBService();
-  }
-
-  private get headers() {
-    return {
-      'Authorization': `Bearer ${this.apiToken}`,
-      'Content-Type': 'application/json'
-    };
+    
+    // Initialize the specialized services
+    this.changeSetService = new ChangeSetService(workspaceId, apiToken);
+    this.componentService = new ComponentService(workspaceId, apiToken);
   }
 
   private createProgressUpdate(
@@ -48,167 +34,6 @@ export class DeploymentService {
       timestamp: new Date().toISOString(),
       details
     };
-  }
-
-  async createChangeSet(name: string): Promise<{ success: boolean; changeSetId?: string; error?: string }> {
-    try {
-      const requestBody = { changeSetName: name };
-      console.log(`createChangeSet request body:`, JSON.stringify(requestBody));
-      console.log(`API URL: ${this.apiUrl}/v1/w/${this.workspaceId}/change-sets`);
-      
-      const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-      return { success: true, changeSetId: data.changeSet.id };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async forceApplyChangeSet(changeSetId: string, timeoutSeconds: number = 120): Promise<{ success: boolean; error?: string }> {
-    const startTime = Date.now();
-    const retryInterval = 5000; // 5 seconds
-
-    while (Date.now() - startTime < timeoutSeconds * 1000) {
-      try {
-        const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets/${changeSetId}/force_apply`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiToken}`,
-            'accept': 'application/json'
-          },
-          body: ''
-        });
-
-        if (response.ok) {
-          return { success: true };
-        } else if (response.status === 428) {
-          // PRECONDITION_REQUIRED - DVU roots still exist
-          const remaining = timeoutSeconds * 1000 - (Date.now() - startTime);
-          if (remaining > retryInterval) {
-            await new Promise(resolve => setTimeout(resolve, retryInterval));
-            continue;
-          } else {
-            break;
-          }
-        } else {
-          const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
-      } catch (error: any) {
-        return { success: false, error: error.message };
-      }
-    }
-
-    return { success: false, error: 'Force apply timeout: DVU roots still processing' };
-  }
-
-  async waitForMergeSuccess(changeSetId: string, timeoutSeconds: number = 300): Promise<{ success: boolean; error?: string; details?: any }> {
-    const startTime = Date.now();
-    const pollInterval = 10000; // 10 seconds
-
-    while (Date.now() - startTime < timeoutSeconds * 1000) {
-      try {
-        const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets/${changeSetId}/merge_status`, {
-          method: 'GET',
-          headers: this.headers
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
-
-        const mergeData = await response.json();
-        const changeSet = mergeData.changeSet || {};
-        const actions = mergeData.actions || [];
-
-        if (!actions.length) {
-          const status = changeSet.status;
-          if (status === "Applied") {
-            return { success: true, details: { message: "Change set applied with no actions" } };
-          }
-          // Continue waiting if not applied yet
-        } else {
-          const states = actions.map((action: any) => action.state);
-          if (states.every((state: string) => state === "Success")) {
-            return { success: true, details: { message: "All actions succeeded" } };
-          }
-
-          const failedActions = actions.filter((action: any) => action.state === "Failed");
-          if (failedActions.length > 0) {
-            return { 
-              success: false, 
-              error: `${failedActions.length} action(s) failed`,
-              details: { failedActions }
-            };
-          }
-        }
-
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-      } catch (error: any) {
-        return { success: false, error: error.message };
-      }
-    }
-
-    return { success: false, error: `Merge timeout after ${timeoutSeconds} seconds` };
-  }
-
-  async deleteChangeSet(changeSetId: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets/${changeSetId}`, {
-        method: 'DELETE',
-        headers: this.headers
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async createComponent(
-    changeSetId: string, 
-    schemaName: string, 
-    name: string, 
-    options?: { attributes?: any; viewName?: string }
-  ): Promise<{ success: boolean; componentId?: string; error?: string }> {
-    try {
-      const requestBody: any = { schemaName, name };
-      if (options) {
-        Object.assign(requestBody, options);
-      }
-
-      const response = await fetch(`${this.apiUrl}/v1/w/${this.workspaceId}/change-sets/${changeSetId}/components`, {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-      return { success: true, componentId: data.component.id };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
   }
 
   async deployTenant(configId: string, accountName: string, progressCallback?: (progress: DeploymentProgress[]) => void): Promise<DeploymentResult> {
@@ -243,7 +68,7 @@ export class DeploymentService {
       // Step 2: Create changeset
       await updateProgress('changeset', 'in_progress', 'Creating change set...');
       console.log(`Creating changeset with name: "${changeSetName}" (length: ${changeSetName.length})`);
-      const createResult = await this.createChangeSet(changeSetName);
+      const createResult = await this.changeSetService.createChangeSet(changeSetName);
       if (!createResult.success) {
         await updateProgress('changeset', 'failed', `Failed to create change set: ${createResult.error}`);
         return { success: false, error: createResult.error, progress };
@@ -253,7 +78,7 @@ export class DeploymentService {
 
       // Step 3: Create AWS Organizations Account component
       await updateProgress('component', 'in_progress', 'Creating AWS Organizations Account component...');
-      const componentResult = await this.createComponent(changeSetId, 'AWS::Organizations::Account', `${accountName}`, {
+      const componentResult = await this.componentService.createComponent(changeSetId, 'AWS::Organizations::Account', `${accountName}`, {
         attributes: {
           "/domain/AccountName": accountName,
           "/domain/Email": `technical-operations+${accountName}@systeminit.com`,
@@ -285,9 +110,9 @@ export class DeploymentService {
       }
       await updateProgress('component', 'completed', `AWS Account component created: ${componentResult.componentId}`);
 
-      // Step 4: Create Workspace Management component
+      // Step 4: Create Workspace Management component (before applying changeset)
       await updateProgress('workspace', 'in_progress', 'Creating Workspace Management component...');
-      const workspaceResult = await this.createComponent(changeSetId, 'Workspace Management', `${accountName}-workspace`, {
+      const workspaceResult = await this.componentService.createComponent(changeSetId, 'Workspace Management', `${accountName}-workspace`, {
         attributes: {
           "/domain/displayName": accountName,
           "/domain/description": `System Initiative workspace for ${accountName} tenant - automated deployment`,
@@ -309,11 +134,56 @@ export class DeploymentService {
       }
       await updateProgress('workspace', 'completed', `Workspace component created: ${workspaceResult.componentId}`);
 
-      // Step 5: Skip apply for review (as requested)
-      await updateProgress('review', 'completed', 'Change set ready for review - apply skipped as requested');
+      // Step 5: Disable Create action for AWS Account component (after both components created)
+      await updateProgress('disable-actions', 'in_progress', 'Disabling Create action for AWS Account component...');
+      const disableResult = await this.componentService.disableComponentActions(changeSetId, componentResult.componentId!, ['Create']);
+      if (!disableResult.success) {
+        console.warn(`Warning: Could not disable Create action: ${disableResult.error}`);
+        await updateProgress('disable-actions', 'completed', 'Create action disable attempted (with warnings)');
+      } else {
+        await updateProgress('disable-actions', 'completed', 'Create action disabled for AWS Account component');
+      }
 
-      // Success - changeset created but not applied
-      await updateProgress('complete', 'completed', 'Tenant deployment prepared successfully (ready for review)');
+      // Step 6: Apply changeset with workspace monitoring (AWS Account CREATE on hold, Workspace CREATE will run)
+      await updateProgress('apply', 'in_progress', 'Applying changeset with both components (AWS Account on hold, Workspace active)...');
+      const applyResult = await this.changeSetService.applyChangeSet(changeSetId, 120, workspaceResult.componentId);
+      if (!applyResult.success) {
+        await updateProgress('apply', 'failed', `Failed to apply changeset: ${applyResult.error}`);
+        return { success: false, error: applyResult.error, changeSetId, progress };
+      }
+      await updateProgress('apply', 'completed', 'Changeset applied successfully with workspace monitoring');
+
+      // Step 7: Extract and store API token if available
+      if (applyResult.data?.workspaceAction?.payload) {
+        await updateProgress('token-extraction', 'in_progress', 'Extracting and storing API token...');
+        const payload = applyResult.data.workspaceAction.payload;
+        const initialApiToken = payload.initialApiToken;
+        
+        if (initialApiToken && payload.id) {
+          // Store token in sensitive DynamoDB table
+          const tokenValue = initialApiToken.token || initialApiToken;
+          const storeResult = await this.dynamoService.saveWorkspaceToken(payload.id, tokenValue);
+          if (storeResult.success) {
+            await updateProgress('token-extraction', 'completed', `API token extracted and stored for workspace ${payload.id}`);
+            console.log(`✅ Workspace API token stored for workspace: ${payload.id}`);
+            console.log(`Token expires at: ${initialApiToken.expiresAt || 'No expiration'}`);
+          } else {
+            await updateProgress('token-extraction', 'failed', `Failed to store API token: ${storeResult.error}`);
+            console.warn(`Warning: Could not store API token: ${storeResult.error}`);
+          }
+        } else {
+          await updateProgress('token-extraction', 'completed', 'No initialApiToken available in workspace component');
+          console.warn('Warning: No initialApiToken found in workspace component');
+        }
+      } else if (applyResult.data?.warning) {
+        await updateProgress('token-extraction', 'completed', `Workspace created with warning: ${applyResult.data.warning}`);
+        console.warn(`Warning: ${applyResult.data.warning}`);
+      } else {
+        await updateProgress('token-extraction', 'completed', 'Workspace component processing completed');
+      }
+
+      // Success - changeset created and applied
+      await updateProgress('complete', 'completed', 'Tenant deployment completed successfully');
       return { success: true, changeSetId, progress, deploymentId };
 
     } catch (error: any) {

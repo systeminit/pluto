@@ -303,20 +303,26 @@ export class DynamoDBService {
     }
   }
 
-  async saveWorkspaceToken(workspaceId: string, token: string): Promise<TestResult> {
+  async saveWorkspaceToken(workspaceId: string, token: string, externalId?: string): Promise<TestResult> {
     try {
-      
+
       const client = await this.getClient();
       const timestamp = new Date().toISOString();
 
+      const item: any = {
+        workspaceId: { S: workspaceId },
+        token: { S: token },
+        createdAt: { S: timestamp },
+        updatedAt: { S: timestamp }
+      };
+
+      if (externalId) {
+        item.externalId = { S: externalId };
+      }
+
       const command = new PutItemCommand({
         TableName: this.sensitiveTableName,
-        Item: {
-          workspaceId: { S: workspaceId },
-          token: { S: token },
-          createdAt: { S: timestamp },
-          updatedAt: { S: timestamp }
-        }
+        Item: item
       });
 
       await client.send(command);
@@ -357,7 +363,7 @@ export class DynamoDBService {
       });
 
       const result = await client.send(command);
-      
+
       if (!result.Items) {
         return [];
       }
@@ -365,6 +371,7 @@ export class DynamoDBService {
       return result.Items.map(item => ({
         workspaceId: item.workspaceId?.S || '',
         token: item.token?.S || '',
+        externalId: item.externalId?.S || '',
         createdAt: item.createdAt?.S || '',
         updatedAt: item.updatedAt?.S || ''
       }));

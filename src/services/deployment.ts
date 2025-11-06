@@ -158,14 +158,16 @@ export class DeploymentService {
         await updateProgress('token-extraction', 'in_progress', 'Extracting and storing API token...');
         const payload = applyResult.data.workspaceAction.payload;
         const initialApiToken = payload.initialApiToken;
-        
+
         if (initialApiToken && payload.id) {
-          // Store token in sensitive DynamoDB table
+          // Store token, workspace ID, and externalId in sensitive DynamoDB table
           const tokenValue = initialApiToken.token || initialApiToken;
-          const storeResult = await this.dynamoService.saveWorkspaceToken(payload.id, tokenValue);
+          const externalId = payload.externalId;
+          const storeResult = await this.dynamoService.saveWorkspaceToken(payload.id, tokenValue, externalId);
           if (storeResult.success) {
             await updateProgress('token-extraction', 'completed', `API token extracted and stored for workspace ${payload.id}`);
             console.log(`✅ Workspace API token stored for workspace: ${payload.id}`);
+            console.log(`External ID: ${externalId || 'Not available'}`);
             console.log(`Token expires at: ${initialApiToken.expiresAt || 'No expiration'}`);
           } else {
             await updateProgress('token-extraction', 'failed', `Failed to store API token: ${storeResult.error}`);

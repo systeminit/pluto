@@ -18,14 +18,28 @@ const workspaceService = new WorkspaceService();
 // Store for deployment progress tracking
 const deploymentProgress = new Map<string, any>();
 
-// Initialize tables on startup
+// Initialize tables on startup with retry logic
 console.log("🗄️ Initializing DynamoDB tables...");
-try {
-  await dynamoService.ensureTable();
-  console.log("✅ DynamoDB tables initialized successfully");
-} catch (error) {
-  console.error("❌ Failed to initialize DynamoDB tables:", error);
-  console.error("The app will continue but may not work properly without database tables");
+const maxRetries = 10;
+let retryCount = 0;
+let tablesInitialized = false;
+
+while (!tablesInitialized && retryCount < maxRetries) {
+  try {
+    await dynamoService.ensureTable();
+    console.log("✅ DynamoDB tables initialized successfully");
+    tablesInitialized = true;
+  } catch (error) {
+    retryCount++;
+    if (retryCount < maxRetries) {
+      const waitTime = Math.min(1000 * Math.pow(2, retryCount - 1), 5000); // Exponential backoff, max 5s
+      console.log(`⏳ DynamoDB not ready yet (attempt ${retryCount}/${maxRetries}), retrying in ${waitTime}ms...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    } else {
+      console.error("❌ Failed to initialize DynamoDB tables after", maxRetries, "attempts:", error);
+      console.error("The app will continue but may not work properly without database tables");
+    }
+  }
 }
 
 app.get("/", async (c) => {

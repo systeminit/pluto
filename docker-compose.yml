@@ -16,6 +16,8 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
+    depends_on:
+      - dynamodb-local
 
   dynamodb-local:
     image: amazon/dynamodb-local:latest

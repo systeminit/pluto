@@ -566,15 +566,68 @@
                     loadConfigurations();
                     loadConfigData();
                     loadSensitiveData();
+                    loadTenantDeployments();
                 }
             } catch (e) {
                 showStatus('Error pruning database: ' + e.message, 'error');
             }
         }
 
-        function loadTenantDeployments() {
+        async function loadTenantDeployments() {
             const dataDiv = document.getElementById('tenantDeploymentsData');
-            dataDiv.innerHTML = 'Tenant deployment history viewing is temporarily disabled. The audit data is still being recorded in the database.';
+            dataDiv.innerHTML = 'Loading tenant deployment history...';
+            
+            try {
+                const response = await fetch('/api/tenant-deployments');
+                const result = await response.json();
+                
+                if (result.success && result.data && result.data.length > 0) {
+                    let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+                    html += '<tr style="background: #f5f5f5;">';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Deployment ID</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Config ID</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Status</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Current Step</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Message</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Started At</th>';
+                    html += '<th style="border: 1px solid #ddd; padding: 8px;">Completed At</th>';
+                    html += '</tr>';
+                    
+                    // Data is already sorted by startTime in the backend
+                    
+                    result.data.forEach(deployment => {
+                        const statusColor = deployment.status === 'completed' ? '#28a745' : 
+                                          deployment.status === 'failed' ? '#dc3545' : 
+                                          deployment.status === 'in_progress' ? '#007cba' : 
+                                          deployment.status === 'started' ? '#17a2b8' : '#6c757d';
+                        
+                        // Format dates with fallbacks
+                        const startTime = deployment.startTime ? new Date(deployment.startTime).toLocaleString() : 'Unknown';
+                        const endTime = deployment.endTime ? new Date(deployment.endTime).toLocaleString() : 
+                                       deployment.lastUpdated ? new Date(deployment.lastUpdated).toLocaleString() : 
+                                       'In Progress';
+                        
+                        html += '<tr>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px; font-family: monospace; font-size: 12px;">' + (deployment.deploymentId || 'Unknown') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px; font-family: monospace; font-size: 12px;">' + (deployment.configId || 'Unknown') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px; color: ' + statusColor + '; font-weight: bold;">' + (deployment.status || 'Unknown') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + (deployment.currentStep || 'N/A') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px; max-width: 300px; word-wrap: break-word;">' + (deployment.message || 'N/A') + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + startTime + '</td>';
+                        html += '<td style="border: 1px solid #ddd; padding: 8px;">' + endTime + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</table>';
+                    html += '<p style="margin-top: 10px; color: #666; font-size: 14px;">Total deployments: ' + result.data.length + '</p>';
+                    dataDiv.innerHTML = html;
+                } else {
+                    dataDiv.innerHTML = 'No tenant deployment history found.';
+                }
+            } catch (error) {
+                dataDiv.innerHTML = 'Error loading tenant deployment history: ' + error.message;
+                console.error('Error loading tenant deployments:', error);
+            }
         }
 
         window.addEventListener('load', function() {

@@ -150,22 +150,23 @@ export class ChangeSetService {
             if (!workspaceAction) {
               console.log(`✅ Workspace component action completed - no longer in merge status`);
               
-              // Now poll for initialApiToken in component resource
-              console.log(`🔍 Polling for initialApiToken in workspace component resource...`);
-              
+              // Now poll for initialApiToken in component resource ON HEAD
+              console.log(`🔍 Polling for initialApiToken in workspace component resource on HEAD changeset...`);
+
               const tokenPollStart = Date.now();
               const tokenTimeout = 60000; // 60 seconds for token polling
-              
+
               while (Date.now() - tokenPollStart < tokenTimeout) {
                 try {
-                  const componentResponse = await this.componentService.getComponent(changeSetId, workspaceComponentId, true, tokenTimeout);
-                  
+                  // Query component on HEAD changeset (where resource values are populated after apply)
+                  const componentResponse = await this.componentService.getComponent("HEAD", workspaceComponentId, true, tokenTimeout);
+
                   if (!componentResponse.success) {
                     throw new Error(componentResponse.error);
                   }
-                  
+
                   const component = componentResponse.data.component as ComponentResource;
-                  console.log(`🔍 Component ${workspaceComponentId} resourceProps:`, JSON.stringify(component?.resourceProps, null, 2));
+                  console.log(`🔍 Component ${workspaceComponentId} resourceProps on HEAD:`, JSON.stringify(component?.resourceProps, null, 2));
                   
                   // Check for initialApiToken in resource payload (preferred - has expiresAt)
                   const resourcePayload = component?.attributes?.['/resource/payload'];

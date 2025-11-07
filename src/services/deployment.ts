@@ -139,7 +139,12 @@ export class DeploymentService {
 
       // Step 5: Apply changeset with both components (AWS Account and Workspace will both run)
       await updateProgress('apply', 'in_progress', 'Applying changeset with both components...');
-      const applyResult = await this.changeSetService.applyChangeSet(changeSetId, 120, [componentResult.componentId!, workspaceResult.componentId!]);
+      const applyResult = await this.changeSetService.applyChangeSet(
+        changeSetId, 
+        120, 
+        [componentResult.componentId!, workspaceResult.componentId!],
+        (message: string) => updateProgress('apply', 'in_progress', message)
+      );
       if (!applyResult.success) {
         await updateProgress('apply', 'failed', `Failed to apply changeset: ${applyResult.error}`);
         return { success: false, error: applyResult.error, changeSetId, progress };
@@ -268,6 +273,29 @@ export class DeploymentService {
         }
       } else {
         await updateProgress('stackset-creation', 'completed', 'StackSet creation skipped - missing required data');
+      }
+
+      // Step 10: Seed the tenant workspace with AWS credentials
+      if (workspaceData && awsAccountId) {
+        await updateProgress('tenant-seeding', 'in_progress', 'Seeding tenant workspace with AWS credentials...');
+        try {
+          const seedResult = await this.changeSetService.seedTenantWorkspace(
+            workspaceData.workspaceId,
+            workspaceData.token,
+            awsAccountId
+          );
+          if (seedResult.success) {
+            await updateProgress('tenant-seeding', 'completed', `Tenant workspace seeded with AWS credentials for account ${awsAccountId}`);
+          } else {
+            await updateProgress('tenant-seeding', 'failed', `Tenant seeding failed: ${seedResult.error}`);
+            console.warn(`Warning: Tenant seeding failed: ${seedResult.error}`);
+          }
+        } catch (error: any) {
+          await updateProgress('tenant-seeding', 'failed', `Tenant seeding error: ${error.message}`);
+          console.warn(`Warning: Tenant seeding error: ${error.message}`);
+        }
+      } else {
+        await updateProgress('tenant-seeding', 'completed', 'Tenant seeding skipped - missing workspace data or AWS account ID');
       }
 
       // Success - changeset created and applied
@@ -403,15 +431,27 @@ export class DeploymentService {
       console.log(`🔍 Components created - String Template: ${templateResult.componentId}, StackSet: ${stackSetResult.componentId}`);
       console.log(`⏳ Waiting for CloudFormation IAM Execution Role Seeding in New Tenant...`);
       
-      // Wait 4 minutes for IAM role seeding to complete
-      await new Promise(resolve => setTimeout(resolve, 4 * 60 * 1000)); // 4 minutes
+      // Wait 2 minutes for IAM role seeding to complete with progress updates
+      const waitTime = 2 * 60 * 1000; // 2 minutes
+      const updateInterval = 10 * 1000; // 10 seconds
+      let elapsed = 0;
+      
+      while (elapsed < waitTime) {
+        const remaining = (waitTime - elapsed) / 1000;
+        console.log(`⏳ IAM role seeding in progress... (${remaining.toFixed(0)}s remaining)`);
+        
+        const sleepTime = Math.min(updateInterval, waitTime - elapsed);
+        await new Promise(resolve => setTimeout(resolve, sleepTime));
+        elapsed += sleepTime;
+      }
       
       // Step 6: Apply the StackSet changeset and wait for completion
       console.log(`🚀 Applying StackSet changeset...`);
       const applyResult = await this.changeSetService.applyChangeSet(
         stacksetChangeSetId, 
         120, 
-        [templateResult.componentId!, stackSetResult.componentId!]
+        [templateResult.componentId!, stackSetResult.componentId!],
+        (message: string) => console.log(`📋 StackSet: ${message}`)
       );
       
       if (!applyResult.success) {

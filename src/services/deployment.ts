@@ -6,6 +6,7 @@ import { DynamoDBService } from "./dynamodb.ts";
 import { ChangeSetService } from "./changeset.ts";
 import { ComponentService } from "./component.ts";
 import { TokenExtractor } from "./token-extractor.ts";
+import { runTemplate } from "@systeminit/template";
 
 export class DeploymentService {
   private workspaceId: string;
@@ -268,6 +269,37 @@ export class DeploymentService {
         }
       } else {
         await updateProgress('stackset-creation', 'completed', 'StackSet creation skipped - missing required data');
+      }
+
+      // Step 10: Run AWS Standard VPC template in the newly created workspace
+      if (workspaceData && workspaceData.token) {
+        await updateProgress('vpc-template', 'in_progress', 'Running AWS Standard VPC template...');
+        try {
+          // Set the SI_API_TOKEN environment variable to the newly created workspace token
+          const originalToken = Deno.env.get("SI_API_TOKEN");
+          Deno.env.set("SI_API_TOKEN", workspaceData.token);
+
+          try {
+            await runTemplate('./src/si-templates/aws-standard-vpc.ts', {
+              key: `${accountName}-vpc-${environmentUuid}`,
+              input: './src/si-templates/aws-standard-vpc-prod-input.yaml',
+              dryRun: false
+            });
+            await updateProgress('vpc-template', 'completed', 'VPC template executed successfully');
+          } finally {
+            // Restore original token
+            if (originalToken) {
+              Deno.env.set("SI_API_TOKEN", originalToken);
+            } else {
+              Deno.env.delete("SI_API_TOKEN");
+            }
+          }
+        } catch (error: any) {
+          await updateProgress('vpc-template', 'failed', `VPC template execution failed: ${error.message}`);
+          console.warn(`Warning: VPC template execution failed: ${error.message}`);
+        }
+      } else {
+        await updateProgress('vpc-template', 'completed', 'VPC template execution skipped - missing workspace token');
       }
 
       // Success - changeset created and applied

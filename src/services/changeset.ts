@@ -94,7 +94,7 @@ export class ChangeSetService {
     }
   }
 
-  async applyChangeSet(changeSetId: string, timeoutSeconds: number = 120, workspaceComponentId?: string): Promise<ServiceResult> {
+  async applyChangeSet(changeSetId: string, timeoutSeconds: number = 120, componentIds?: string[]): Promise<ServiceResult> {
     try {
       console.log(`🚀 Applying changeset with 5-second retry pattern for DVU errors (timeout: ${timeoutSeconds}s)`);
       
@@ -128,105 +128,39 @@ export class ChangeSetService {
         }
       }
       
-      // If workspace component monitoring is requested, poll for action completion
-      if (workspaceComponentId) {
-        console.log(`🏢 Polling merge status for workspace component ${workspaceComponentId} action completion...`);
+      // If component monitoring is requested, poll for all actions to complete
+      if (componentIds && componentIds.length > 0) {
+        console.log(`🏢 Polling merge status for component actions completion: ${componentIds.join(', ')}`);
         
         const pollStartTime = Date.now();
-        const pollTimeout = 30000; // 30 seconds for workspace action polling
+        const pollTimeout = 60000; // 60 seconds for action polling
         
         while (Date.now() - pollStartTime < pollTimeout) {
           try {
-            // Check merge status to see if workspace component action still exists
+            // Check merge status to see if any monitored component actions still exist
             const mergeResponse = await this.changeSetsApi.mergeStatus({
               workspaceId: this.workspaceId,
               changeSetId: changeSetId
             });
             const mergeData = mergeResponse.data;
-            const workspaceAction = mergeData.actions?.find((action: any) => 
-              action.component?.id === workspaceComponentId
-            );
             
-            if (!workspaceAction) {
-              console.log(`✅ Workspace component action completed - no longer in merge status`);
-              
-              // Now poll for initialApiToken in component resource ON HEAD
-              console.log(`🔍 Polling for initialApiToken in workspace component resource on HEAD changeset...`);
-
-              const tokenPollStart = Date.now();
-              const tokenTimeout = 60000; // 60 seconds for token polling
-
-              while (Date.now() - tokenPollStart < tokenTimeout) {
-                try {
-                  // Query component on HEAD changeset (where resource values are populated after apply)
-                  const componentResponse = await this.componentService.getComponent("HEAD", workspaceComponentId, true, tokenTimeout);
-
-                  if (!componentResponse.success) {
-                    throw new Error(componentResponse.error);
-                  }
-
-                  const component = componentResponse.data.component as ComponentResource;
-                  console.log(`🔍 Component ${workspaceComponentId} resourceProps on HEAD:`, JSON.stringify(component?.resourceProps, null, 2));
-                  
-                  // Check for initialApiToken in resource payload (preferred - has expiresAt)
-                  const resourcePayload = component?.attributes?.['/resource/payload'];
-                  console.log(`🔍 Checking /resource/payload for token...`);
-                  
-                  if (this.hasValidToken(resourcePayload)) {
-                    console.log(`✅ Found initialApiToken in component resource payload!`);
-                    console.log(`🎯 Token expires at: ${resourcePayload.initialApiToken.expiresAt || 'No expiration'}`);
-                    console.log(`🆔 Workspace ID: ${resourcePayload.id}`);
-                    
-                    return { 
-                      success: true, 
-                      data: { 
-                        workspaceAction: { 
-                          payload: resourcePayload 
-                        } 
-                      } 
-                    };
-                  }
-                  
-                  // Check resourceProps for initialApiToken (fallback)
-                  console.log(`🔍 Checking resourceProps for token...`);
-                  if (component?.resourceProps) {
-                    const tokenResult = this.extractTokenFromResourceProps(component.resourceProps);
-                    if (tokenResult) {
-                      console.log(`✅ Found initialApiToken in resourceProps!`);
-                      console.log(`🎯 Token expires at: ${tokenResult.token.expiresAt || 'No expiration'}`);
-                      console.log(`🆔 Workspace ID: ${tokenResult.workspaceId}`);
-                      
-                      return { 
-                        success: true, 
-                        data: { 
-                          workspaceAction: { 
-                            payload: {
-                              id: tokenResult.workspaceId,
-                              initialApiToken: tokenResult.token
-                            }
-                          } 
-                        } 
-                      };
-                    }
-                  }
-                  
-                  // Wait before next token poll
-                  const tokenRemaining = (tokenTimeout - (Date.now() - tokenPollStart)) / 1000;
-                  console.log(`⏳ initialApiToken not ready yet, polling again in 5s... (${tokenRemaining.toFixed(1)}s remaining)`);
-                  await new Promise(resolve => setTimeout(resolve, 5000));
-                } catch (error: any) {
-                  console.warn(`Warning: Could not fetch workspace component: ${error.message}`);
-                  break;
-                }
-              }
-              
-              console.log(`⚠️ Workspace component created but initialApiToken not found after 60s polling`);
-              return { success: true, data: { warning: 'Workspace created but initialApiToken not found' } };
+            // Check if any of our monitored components still have actions running
+            const runningActions = mergeData.actions?.filter((action: any) => 
+              componentIds.includes(action.component?.id)
+            ) || [];
+            
+            if (runningActions.length === 0) {
+              console.log(`✅ All monitored component actions completed - no longer in merge status`);
+              return { success: true };
             }
             
-            // Workspace action still exists, continue polling
+            // Some actions still running, continue polling
             const pollRemaining = (pollTimeout - (Date.now() - pollStartTime)) / 1000;
-            console.log(`⏳ Workspace action still present, polling again in 2s... (${pollRemaining.toFixed(1)}s remaining)`);
+            console.log(`⏳ ${runningActions.length} component actions still running, polling again in 2s... (${pollRemaining.toFixed(1)}s remaining)`);
+            runningActions.forEach((action: any) => {
+              console.log(`  - ${action.kind} action for component ${action.component?.id}`);
+            });
+            
             await new Promise(resolve => setTimeout(resolve, 2000));
           } catch (error: any) {
             console.warn(`Warning: Error during merge status polling: ${error.message}`);
@@ -234,7 +168,7 @@ export class ChangeSetService {
           }
         }
         
-        console.log(`⚠️ Workspace action polling timeout after 30s - action may still be processing`);
+        console.log(`⚠️ Component action polling timeout after 60s - some actions may still be processing`);
       }
       
       return { success: true };

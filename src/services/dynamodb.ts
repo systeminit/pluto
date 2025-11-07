@@ -303,7 +303,7 @@ export class DynamoDBService {
     }
   }
 
-  async saveWorkspaceToken(workspaceId: string, token: string, externalId?: string): Promise<TestResult> {
+  async saveWorkspaceToken(workspaceId: string, token: string, externalId?: string, awsAccountId?: string): Promise<TestResult> {
     try {
 
       const client = await this.getClient();
@@ -318,6 +318,10 @@ export class DynamoDBService {
 
       if (externalId) {
         item.externalId = { S: externalId };
+      }
+
+      if (awsAccountId) {
+        item.awsAccountId = { S: awsAccountId };
       }
 
       const command = new PutItemCommand({
@@ -372,6 +376,7 @@ export class DynamoDBService {
         workspaceId: item.workspaceId?.S || '',
         token: item.token?.S || '',
         externalId: item.externalId?.S || '',
+        awsAccountId: item.awsAccountId?.S || '',
         createdAt: item.createdAt?.S || '',
         updatedAt: item.updatedAt?.S || ''
       }));

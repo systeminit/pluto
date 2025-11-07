@@ -50,8 +50,6 @@ export class ComponentService {
       
       while (true) {
         const url = `${this.apiUrl}/v1/w/${this.workspaceId}/change-sets/${changeSetId}/components/${componentId}`;
-        console.log(`🌐 Making GET request to: ${url}`);
-        console.log(`🔑 Headers:`, JSON.stringify(this.headers, null, 2));
         
         const response = await fetch(url, {
           method: 'GET',
@@ -60,12 +58,10 @@ export class ComponentService {
         
         if (!response.ok) {
           const errorText = await response.text();
-          console.error(`❌ HTTP ${response.status} error:`, errorText);
           throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
         
         const data = await response.json();
-        console.log(`📡 Raw API response:`, JSON.stringify(data, null, 2));
         
         if (!waitForToken) {
           return { success: true, data };
@@ -76,21 +72,11 @@ export class ComponentService {
           prop.path === "root/resource_value/initialApiToken/token"
         );
         
-        console.log(`🔍 Token prop found:`, tokenProp ? 'YES' : 'NO');
-        if (tokenProp) {
-          console.log(`🔍 Token prop structure:`, JSON.stringify(tokenProp, null, 2));
-        }
-        
-        // Also check in attributes for comparison
+        // Also check in attributes and resource payload
         const attributeToken = data.component?.attributes?.['/resource_value/initialApiToken/token'];
-        console.log(`🔍 Attribute token:`, attributeToken ? 'FOUND' : 'NOT FOUND');
-        
-        // Also check resource payload
         const resourcePayload = data.component?.attributes?.['/resource/payload'];
-        console.log(`🔍 Resource payload token:`, resourcePayload?.initialApiToken?.token ? 'FOUND' : 'NOT FOUND');
         
         if (tokenProp?.value || attributeToken || resourcePayload?.initialApiToken?.token) {
-          console.log(`✅ Token found! Returning component data.`);
           return { success: true, data };
         }
         
@@ -98,7 +84,6 @@ export class ComponentService {
         const elapsed = Date.now() - startTime;
         if (elapsed >= timeoutMs) {
           console.warn(`⚠️ Timeout waiting for initialApiToken after ${elapsed}ms`);
-          console.warn(`⚠️ Final component state:`, JSON.stringify(data.component, null, 2));
           return { success: true, data }; // Return anyway, caller can handle missing token
         }
         

@@ -8,9 +8,9 @@ availabilityZone1: "us-east-1a"
 availabilityZone2: "us-east-1b"
 credential:
   kind: "search"
-  query: 'name: "demo credential"'
+  query: 'name: "tenant-aws-credential"'
   path: "/secrets/AWS Credential"
 region:
   kind: "$source"
-  component: "demo region"
+  component: "tenant-aws-region"
   path: "/domain/region"

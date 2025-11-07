@@ -14,11 +14,11 @@ export class DeploymentService {
   private changeSetService: ChangeSetService;
   private componentService: ComponentService;
   private tokenExtractor: TokenExtractor;
-  
+
   constructor(workspaceId: string, apiToken: string, dynamoService?: DynamoDBService) {
     this.workspaceId = workspaceId;
     this.dynamoService = dynamoService || new DynamoDBService();
-    
+
     // Initialize the specialized services
     this.changeSetService = new ChangeSetService(workspaceId, apiToken);
     this.componentService = new ComponentService(workspaceId, apiToken);
@@ -26,9 +26,9 @@ export class DeploymentService {
   }
 
   private createProgressUpdate(
-    step: string, 
-    status: DeploymentProgress['status'], 
-    message: string, 
+    step: string,
+    status: DeploymentProgress['status'],
+    message: string,
     details?: any
   ): DeploymentProgress {
     return {
@@ -47,10 +47,10 @@ export class DeploymentService {
 
     const updateProgress = async (step: string, status: DeploymentProgress['status'], message: string, details?: any) => {
       progress.push(this.createProgressUpdate(step, status, message, details));
-      
+
       // Log to tenant audit table
       await this.dynamoService.updateTenantDeploymentStep(deploymentId, step, status, message, details);
-      
+
       if (progressCallback) {
         progressCallback([...progress]);
       }
@@ -59,7 +59,7 @@ export class DeploymentService {
     try {
       // Get config data for audit logging
       const configData = await this.dynamoService.getConfigById(configId);
-      
+
       // Create initial tenant deployment record
       await this.dynamoService.createTenantDeployment(deploymentId, configId, configData);
 
@@ -107,7 +107,7 @@ export class DeploymentService {
         },
         viewName: "Tenants"
       });
-      
+
       if (!componentResult.success) {
         await updateProgress('component', 'failed', `Failed to create component: ${componentResult.error}`);
         return { success: false, error: componentResult.error, changeSetId, progress };
@@ -131,7 +131,7 @@ export class DeploymentService {
         },
         viewName: "Tenants"
       });
-      
+
       if (!workspaceResult.success) {
         await updateProgress('workspace', 'failed', `Failed to create workspace component: ${workspaceResult.error}`);
         return { success: false, error: workspaceResult.error, changeSetId, progress };
@@ -140,7 +140,12 @@ export class DeploymentService {
 
       // Step 5: Apply changeset with both components (AWS Account and Workspace will both run)
       await updateProgress('apply', 'in_progress', 'Applying changeset with both components...');
-      const applyResult = await this.changeSetService.applyChangeSet(changeSetId, 120, [componentResult.componentId!, workspaceResult.componentId!]);
+      const applyResult = await this.changeSetService.applyChangeSet(
+        changeSetId,
+        120,
+        [componentResult.componentId!, workspaceResult.componentId!],
+        (message: string) => updateProgress('apply', 'in_progress', message)
+      );
       if (!applyResult.success) {
         await updateProgress('apply', 'failed', `Failed to apply changeset: ${applyResult.error}`);
         return { success: false, error: applyResult.error, changeSetId, progress };
@@ -164,7 +169,7 @@ export class DeploymentService {
             const resourcePayload = workspaceResponse.data.component?.attributes?.['/resource/payload'];
             workspaceData.externalId = resourcePayload?.externalId || null;
           }
-          
+
           await updateProgress('workspace-extraction', 'completed', `Workspace token extracted: ${workspaceData.workspaceId}`);
         } else {
           throw new Error(`Workspace token extraction failed: ${tokenResult.error}`);
@@ -181,35 +186,35 @@ export class DeploymentService {
       try {
         const startTime = Date.now();
         const timeout = 60000; // 60 seconds
-        
+
         while (Date.now() - startTime < timeout) {
           const accountResponse = await this.componentService.getComponent("HEAD", componentResult.componentId!, false);
           if (accountResponse.success) {
             const awsComponent = accountResponse.data.component;
-            
+
             // Check resource payload first
             const resourcePayload = awsComponent?.attributes?.['/resource/payload'];
             if (resourcePayload?.AccountId) {
               awsAccountId = resourcePayload.AccountId;
               break;
             }
-            
+
             // Check resourceProps as fallback
-            const accountIdProp = awsComponent?.resourceProps?.find((prop: any) => 
+            const accountIdProp = awsComponent?.resourceProps?.find((prop: any) =>
               prop.path === "root/resource_value/AccountId"
             );
             if (accountIdProp?.value) {
               awsAccountId = accountIdProp.value;
               break;
             }
-            
+
             await new Promise(resolve => setTimeout(resolve, 5000));
           } else {
             console.warn(`Warning: Could not fetch AWS Account component: ${accountResponse.error}`);
             break;
           }
         }
-        
+
         if (awsAccountId) {
           await updateProgress('aws-extraction', 'completed', `AWS Account ID extracted: ${awsAccountId}`);
         } else {
@@ -226,12 +231,12 @@ export class DeploymentService {
         await updateProgress('data-storage', 'in_progress', 'Storing workspace and AWS account data...');
         try {
           const storeResult = await this.dynamoService.saveWorkspaceToken(
-            workspaceData.workspaceId, 
-            workspaceData.token, 
-            workspaceData.externalId || undefined, 
+            workspaceData.workspaceId,
+            workspaceData.token,
+            workspaceData.externalId || undefined,
             awsAccountId || undefined
           );
-          
+
           if (storeResult.success) {
             await updateProgress('data-storage', 'completed', `Data stored successfully for workspace ${workspaceData.workspaceId}`);
             console.log(`✅ All data stored successfully:`);
@@ -259,6 +264,21 @@ export class DeploymentService {
           const stacksetResult = await this.createStackSetForTenant(accountName, awsAccountId, workspaceData.externalId!);
           if (stacksetResult.success) {
             await updateProgress('stackset-creation', 'completed', `StackSet changeset created and applied: ${stacksetResult.changeSetId}`);
+
+            // Step 10: Seed tenant workspace with AWS credentials and run VPC template
+            await updateProgress('tenant-seeding', 'in_progress', 'Seeding tenant workspace with AWS credentials and VPC...');
+            try {
+              const seedResult = await this.changeSetService.seedTenantWorkspace(workspaceData.workspaceId, workspaceData.token, awsAccountId);
+              if (seedResult.success) {
+                await updateProgress('tenant-seeding', 'completed', 'Tenant workspace seeded with AWS credentials, region, and VPC');
+              } else {
+                await updateProgress('tenant-seeding', 'failed', `Tenant seeding failed: ${seedResult.error}`);
+                console.warn(`Warning: Tenant seeding failed: ${seedResult.error}`);
+              }
+            } catch (error: any) {
+              await updateProgress('tenant-seeding', 'failed', `Tenant seeding error: ${error.message}`);
+              console.warn(`Warning: Tenant seeding error: ${error.message}`);
+            }
           } else {
             await updateProgress('stackset-creation', 'failed', `StackSet creation failed: ${stacksetResult.error}`);
             console.warn(`Warning: StackSet creation failed: ${stacksetResult.error}`);
@@ -269,37 +289,7 @@ export class DeploymentService {
         }
       } else {
         await updateProgress('stackset-creation', 'completed', 'StackSet creation skipped - missing required data');
-      }
-
-      // Step 10: Run AWS Standard VPC template in the newly created workspace
-      if (workspaceData && workspaceData.token) {
-        await updateProgress('vpc-template', 'in_progress', 'Running AWS Standard VPC template...');
-        try {
-          // Set the SI_API_TOKEN environment variable to the newly created workspace token
-          const originalToken = Deno.env.get("SI_API_TOKEN");
-          Deno.env.set("SI_API_TOKEN", workspaceData.token);
-
-          try {
-            await runTemplate('./src/si-templates/aws-standard-vpc.ts', {
-              key: `${accountName}-vpc-${environmentUuid}`,
-              input: './src/si-templates/aws-standard-vpc-prod-input.yaml',
-              dryRun: false
-            });
-            await updateProgress('vpc-template', 'completed', 'VPC template executed successfully');
-          } finally {
-            // Restore original token
-            if (originalToken) {
-              Deno.env.set("SI_API_TOKEN", originalToken);
-            } else {
-              Deno.env.delete("SI_API_TOKEN");
-            }
-          }
-        } catch (error: any) {
-          await updateProgress('vpc-template', 'failed', `VPC template execution failed: ${error.message}`);
-          console.warn(`Warning: VPC template execution failed: ${error.message}`);
-        }
-      } else {
-        await updateProgress('vpc-template', 'completed', 'VPC template execution skipped - missing workspace token');
+        await updateProgress('tenant-seeding', 'completed', 'Tenant seeding skipped - missing required data');
       }
 
       // Success - changeset created and applied
@@ -382,7 +372,7 @@ export class DeploymentService {
           viewName: "Tenants"
         }
       );
-      
+
       if (!templateResult.success) {
         return { success: false, error: `Failed to create String Template: ${templateResult.error}` };
       }
@@ -434,18 +424,30 @@ export class DeploymentService {
       console.log(`📋 StackSet changeset created: ${stacksetChangeSetId}`);
       console.log(`🔍 Components created - String Template: ${templateResult.componentId}, StackSet: ${stackSetResult.componentId}`);
       console.log(`⏳ Waiting for CloudFormation IAM Execution Role Seeding in New Tenant...`);
-      
-      // Wait 4 minutes for IAM role seeding to complete
-      await new Promise(resolve => setTimeout(resolve, 4 * 60 * 1000)); // 4 minutes
-      
+
+      // Wait 2 minutes for IAM role seeding to complete with progress updates
+      const waitTime = 2 * 60 * 1000; // 2 minutes
+      const updateInterval = 10 * 1000; // 10 seconds
+      let elapsed = 0;
+
+      while (elapsed < waitTime) {
+        const remaining = (waitTime - elapsed) / 1000;
+        console.log(`⏳ IAM role seeding in progress... (${remaining.toFixed(0)}s remaining)`);
+
+        const sleepTime = Math.min(updateInterval, waitTime - elapsed);
+        await new Promise(resolve => setTimeout(resolve, sleepTime));
+        elapsed += sleepTime;
+      }
+
       // Step 6: Apply the StackSet changeset and wait for completion
       console.log(`🚀 Applying StackSet changeset...`);
       const applyResult = await this.changeSetService.applyChangeSet(
-        stacksetChangeSetId, 
-        120, 
-        [templateResult.componentId!, stackSetResult.componentId!]
+        stacksetChangeSetId,
+        120,
+        [templateResult.componentId!, stackSetResult.componentId!],
+        (message: string) => console.log(`📋 StackSet: ${message}`)
       );
-      
+
       if (!applyResult.success) {
         return { success: false, error: `Failed to apply StackSet changeset: ${applyResult.error}` };
       }

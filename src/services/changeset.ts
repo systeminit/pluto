@@ -94,7 +94,7 @@ export class ChangeSetService {
     }
   }
 
-  async applyChangeSet(changeSetId: string, timeoutSeconds: number = 120, componentIds?: string[]): Promise<ServiceResult> {
+  async applyChangeSet(changeSetId: string, timeoutSeconds: number = 120, componentIds?: string[], progressCallback?: (message: string) => void): Promise<ServiceResult> {
     try {
       console.log(`🚀 Applying changeset with 5-second retry pattern for DVU errors (timeout: ${timeoutSeconds}s)`);
       
@@ -113,7 +113,9 @@ export class ChangeSetService {
           if (error.status === 428) {
             const elapsed = (Date.now() - startTime) / 1000;
             const remaining = timeoutSeconds - elapsed;
-            console.log(`⏳ DVU Roots still present. Retrying in 5s... (${remaining.toFixed(1)}s remaining)`);
+            const message = `DVU Roots still present. Retrying in 5s... (${remaining.toFixed(1)}s remaining)`;
+            console.log(`⏳ ${message}`);
+            progressCallback?.(message);
             
             if (remaining <= 5) {
               break; // Don't wait if we're close to timeout
@@ -156,7 +158,9 @@ export class ChangeSetService {
             
             // Some actions still running, continue polling
             const pollRemaining = (pollTimeout - (Date.now() - pollStartTime)) / 1000;
-            console.log(`⏳ ${runningActions.length} component actions still running, polling again in 2s... (${pollRemaining.toFixed(1)}s remaining)`);
+            const message = `${runningActions.length} component actions still running, polling again in 2s... (${pollRemaining.toFixed(1)}s remaining)`;
+            console.log(`⏳ ${message}`);
+            progressCallback?.(message);
             runningActions.forEach((action: any) => {
               console.log(`  - ${action.kind} action for component ${action.component?.id}`);
             });
@@ -184,6 +188,211 @@ export class ChangeSetService {
         changeSetId: changeSetId
       });
       return { success: true, data: response.data };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async seedTenantWorkspace(tenantWorkspaceId: string, tenantApiToken: string, awsAccountId: string): Promise<ServiceResult> {
+    try {
+      console.log(`🌱 Seeding tenant workspace ${tenantWorkspaceId} with AWS credentials...`);
+      
+      // Create a new changeset service for the tenant workspace
+      const tenantChangeSetService = new ChangeSetService(tenantWorkspaceId, tenantApiToken);
+      
+      // 1. Create a changeset in the tenant workspace
+      console.log('1. Creating changeset in tenant workspace...');
+      const changeSetResult = await tenantChangeSetService.createChangeSet('initial-aws-setup');
+      if (!changeSetResult.success) {
+        throw new Error(`Failed to create changeset: ${changeSetResult.error}`);
+      }
+      const changeSetId = changeSetResult.changeSetId!;
+      console.log(`✅ Created changeset: ${changeSetId}`);
+
+      // 2. Create AWS Credential component
+      console.log('2. Creating AWS Credential component...');
+      const credentialResult = await this.createTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, 'AWS Credential', 'tenant-aws-credential');
+      if (!credentialResult.success) {
+        throw new Error(`Failed to create AWS Credential: ${credentialResult.error}`);
+      }
+      const credentialComponentId = credentialResult.componentId!;
+      console.log(`✅ Created AWS Credential component: ${credentialComponentId}`);
+
+      // 3. Create Region component
+      console.log('3. Creating Region component...');
+      const regionResult = await this.createTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, 'Region', 'tenant-aws-region');
+      if (!regionResult.success) {
+        throw new Error(`Failed to create Region: ${regionResult.error}`);
+      }
+      const regionComponentId = regionResult.componentId!;
+      console.log(`✅ Created Region component: ${regionComponentId}`);
+
+      // 4. Create AWS Credential secret
+      console.log('4. Creating AWS Credential secret...');
+      const secretResult = await this.createTenantSecret(tenantWorkspaceId, tenantApiToken, changeSetId, 'tenant-aws-credential', 'AWS Credential', {
+        AssumeRole: `arn:aws:iam::${awsAccountId}:role/si-access-prod-manager`
+      });
+      if (!secretResult.success) {
+        throw new Error(`Failed to create secret: ${secretResult.error}`);
+      }
+      console.log(`✅ Created AWS Credential secret`);
+
+      // 5. Update AWS Credential component with secret
+      console.log('5. Updating AWS Credential component with secret...');
+      const updateCredentialResult = await this.updateTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, credentialComponentId, {
+        secrets: {
+          'AWS Credential': 'tenant-aws-credential'
+        }
+      });
+      if (!updateCredentialResult.success) {
+        throw new Error(`Failed to update AWS Credential: ${updateCredentialResult.error}`);
+      }
+      console.log(`✅ Updated AWS Credential component with secret`);
+
+      // 6. Update Region component with region us-east-1
+      console.log('6. Updating Region component...');
+      const updateRegionResult = await this.updateTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, regionComponentId, {
+        properties: {
+          'region': 'us-east-1'
+        }
+      });
+      if (!updateRegionResult.success) {
+        throw new Error(`Failed to update Region: ${updateRegionResult.error}`);
+      }
+      console.log(`✅ Updated Region component with region: us-east-1`);
+
+      // 7. Apply the changeset
+      console.log('7. Applying changeset in tenant workspace...');
+      const applyResult = await tenantChangeSetService.applyChangeSet(changeSetId, 120);
+      if (!applyResult.success) {
+        throw new Error(`Failed to apply changeset: ${applyResult.error}`);
+      }
+      console.log(`✅ Successfully applied changeset in tenant workspace`);
+
+      console.log(`🎉 Successfully seeded tenant workspace ${tenantWorkspaceId} with AWS credentials for account ${awsAccountId}`);
+
+      // 8. Run AWS Standard VPC template now that credentials are set up
+      console.log('8. Running AWS Standard VPC template in tenant workspace...');
+      try {
+        const { runTemplate } = await import("@systeminit/template");
+
+        // Set the SI_API_TOKEN environment variable to the tenant workspace token
+        const originalToken = Deno.env.get("SI_API_TOKEN");
+        Deno.env.set("SI_API_TOKEN", tenantApiToken);
+
+        try {
+          // Generate a unique key for this VPC deployment
+          const vpcKey = `${tenantWorkspaceId}-vpc-${Date.now()}`;
+
+          await runTemplate('./src/si-templates/aws-standard-vpc.ts', {
+            key: vpcKey,
+            input: './src/si-templates/aws-standard-vpc-prod-input.yaml',
+            dryRun: false
+          });
+          console.log(`✅ VPC template executed successfully in tenant workspace`);
+        } finally {
+          // Restore original token
+          if (originalToken) {
+            Deno.env.set("SI_API_TOKEN", originalToken);
+          } else {
+            Deno.env.delete("SI_API_TOKEN");
+          }
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ Warning: VPC template execution failed: ${error.message}`);
+        // Don't fail the entire seeding process if VPC template fails
+      }
+
+      return {
+        success: true,
+        data: {
+          changeSetId,
+          credentialComponentId,
+          regionComponentId,
+          awsAccountId,
+          awsRegion: 'us-east-1'
+        }
+      };
+
+    } catch (error: any) {
+      console.error(`❌ Failed to seed tenant workspace:`, error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async createTenantComponent(workspaceId: string, apiToken: string, changeSetId: string, schemaName: string, name: string, options: any = {}): Promise<{ success: boolean; componentId?: string; error?: string }> {
+    try {
+      const response = await fetch(`https://api.systeminit.com/v1/w/${workspaceId}/change-sets/${changeSetId}/components`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          schemaName,
+          name,
+          ...options
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      return { success: true, componentId: data.component.id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async createTenantSecret(workspaceId: string, apiToken: string, changeSetId: string, name: string, definitionName: string, rawData: any): Promise<ServiceResult> {
+    try {
+      const response = await fetch(`https://api.systeminit.com/v1/w/${workspaceId}/change-sets/${changeSetId}/secrets`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name,
+          definitionName,
+          description: `Secret for ${name}`,
+          rawData
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      return { success: true, data };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async updateTenantComponent(workspaceId: string, apiToken: string, changeSetId: string, componentId: string, options: any): Promise<ServiceResult> {
+    try {
+      const response = await fetch(`https://api.systeminit.com/v1/w/${workspaceId}/change-sets/${changeSetId}/components/${componentId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(options)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      return { success: true, data };
     } catch (error: any) {
       return { success: false, error: error.message };
     }

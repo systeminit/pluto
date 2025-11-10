@@ -1,4 +1,4 @@
-import { SubscriptionInput, TemplateContext } from "../src/template.ts";
+import { SubscriptionInput, TemplateContext } from "@systeminit/template";
 import { z } from "npm:zod";
 
 /**

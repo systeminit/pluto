@@ -1,7 +1,7 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys src/main.ts",
-    "start": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys src/main.ts",
+    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys --allow-run src/main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read --allow-write --allow-sys --allow-run src/main.ts",
     "upload": "deno run --allow-run --allow-env deploy.ts"
   },
   "imports": {
@@ -9,7 +9,8 @@
     "@aws-sdk/credential-providers": "npm:@aws-sdk/credential-providers@^3.450.0",
     "@hono/hono": "https://deno.land/x/hono@v3.9.0/mod.ts",
     "@std/dotenv": "https://deno.land/std@0.204.0/dotenv/mod.ts",
-    "@systeminit/api-client": "jsr:@systeminit/api-client@^1.7.0"
+    "@systeminit/api-client": "jsr:@systeminit/api-client@^1.7.0",
+    "@systeminit/template": "jsr:@systeminit/template@^0.1.1"
   },
   "compilerOptions": {
     "lib": ["dom", "dom.iterable", "es2022", "deno.ns"],

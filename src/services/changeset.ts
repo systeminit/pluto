@@ -23,37 +23,37 @@ export class ChangeSetService {
   private workspaceId: string;
 
   private hasValidToken(payload: any): payload is { initialApiToken: { token: string; expiresAt?: string }; id: string } {
-    return payload && 
-           payload.initialApiToken && 
-           payload.initialApiToken.token && 
+    return payload &&
+           payload.initialApiToken &&
+           payload.initialApiToken.token &&
            typeof payload.initialApiToken.token === 'string' &&
            payload.id;
   }
 
-  private extractTokenFromResourceProps(resourceProps: Array<{ id: string; propId: string; value: any; path: string }>): 
+  private extractTokenFromResourceProps(resourceProps: Array<{ id: string; propId: string; value: any; path: string }>):
     { token: { token: string; expiresAt?: string }; workspaceId: string } | null {
-    
+
     const tokenProp = resourceProps.find(prop => prop.path === 'root/resource_value/initialApiToken');
     const idProp = resourceProps.find(prop => prop.path === 'root/resource_value/id');
-    
+
     console.log(`🔍 Token prop found:`, tokenProp ? 'YES' : 'NO');
     if (tokenProp) {
       console.log(`🔍 Token prop value structure:`, JSON.stringify(tokenProp.value, null, 2));
     }
-    
+
     if (tokenProp && tokenProp.value && tokenProp.value.token && idProp?.value) {
       return {
         token: tokenProp.value,
         workspaceId: idProp.value
       };
     }
-    
+
     return null;
   }
 
   constructor(workspaceId: string, apiToken: string) {
     this.workspaceId = workspaceId;
-    
+
     const config = new Configuration({
       basePath: "https://api.systeminit.com",
       accessToken: apiToken,
@@ -64,7 +64,7 @@ export class ChangeSetService {
         }
       }
     });
-    
+
     this.changeSetsApi = new ChangeSetsApi(config);
     this.componentService = new ComponentService(workspaceId, apiToken);
   }
@@ -79,7 +79,7 @@ export class ChangeSetService {
       });
 
       console.log("🔍 CreateChangeSet Response:", JSON.stringify(response.data, null, 2));
-      
+
       // Check different possible response structures
       if (response.data?.changeSet?.id) {
         return { success: true, changeSetId: response.data.changeSet.id };
@@ -97,9 +97,9 @@ export class ChangeSetService {
   async applyChangeSet(changeSetId: string, timeoutSeconds: number = 120, componentIds?: string[], progressCallback?: (message: string) => void): Promise<ServiceResult> {
     try {
       console.log(`🚀 Applying changeset with 5-second retry pattern for DVU errors (timeout: ${timeoutSeconds}s)`);
-      
+
       const startTime = Date.now();
-      
+
       // Apply changeset with DVU retry logic
       while (Date.now() - startTime < timeoutSeconds * 1000) {
         try {
@@ -116,27 +116,27 @@ export class ChangeSetService {
             const message = `DVU Roots still present. Retrying in 5s... (${remaining.toFixed(1)}s remaining)`;
             console.log(`⏳ ${message}`);
             progressCallback?.(message);
-            
+
             if (remaining <= 5) {
               break; // Don't wait if we're close to timeout
             }
-            
+
             await new Promise(resolve => setTimeout(resolve, 5000));
             continue;
           }
-          
+
           // Handle other errors
           throw error;
         }
       }
-      
+
       // If component monitoring is requested, poll for all actions to complete
       if (componentIds && componentIds.length > 0) {
         console.log(`🏢 Polling merge status for component actions completion: ${componentIds.join(', ')}`);
-        
+
         const pollStartTime = Date.now();
         const pollTimeout = 60000; // 60 seconds for action polling
-        
+
         while (Date.now() - pollStartTime < pollTimeout) {
           try {
             // Check merge status to see if any monitored component actions still exist
@@ -145,17 +145,17 @@ export class ChangeSetService {
               changeSetId: changeSetId
             });
             const mergeData = mergeResponse.data;
-            
+
             // Check if any of our monitored components still have actions running
-            const runningActions = mergeData.actions?.filter((action: any) => 
+            const runningActions = mergeData.actions?.filter((action: any) =>
               componentIds.includes(action.component?.id)
             ) || [];
-            
+
             if (runningActions.length === 0) {
               console.log(`✅ All monitored component actions completed - no longer in merge status`);
               return { success: true };
             }
-            
+
             // Some actions still running, continue polling
             const pollRemaining = (pollTimeout - (Date.now() - pollStartTime)) / 1000;
             const message = `${runningActions.length} component actions still running, polling again in 2s... (${pollRemaining.toFixed(1)}s remaining)`;
@@ -164,17 +164,17 @@ export class ChangeSetService {
             runningActions.forEach((action: any) => {
               console.log(`  - ${action.kind} action for component ${action.component?.id}`);
             });
-            
+
             await new Promise(resolve => setTimeout(resolve, 2000));
           } catch (error: any) {
             console.warn(`Warning: Error during merge status polling: ${error.message}`);
             break;
           }
         }
-        
+
         console.log(`⚠️ Component action polling timeout after 60s - some actions may still be processing`);
       }
-      
+
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -196,10 +196,10 @@ export class ChangeSetService {
   async seedTenantWorkspace(tenantWorkspaceId: string, tenantApiToken: string, awsAccountId: string): Promise<ServiceResult> {
     try {
       console.log(`🌱 Seeding tenant workspace ${tenantWorkspaceId} with AWS credentials...`);
-      
+
       // Create a new changeset service for the tenant workspace
       const tenantChangeSetService = new ChangeSetService(tenantWorkspaceId, tenantApiToken);
-      
+
       // 1. Create a changeset in the tenant workspace
       console.log('1. Creating changeset in tenant workspace...');
       const changeSetResult = await tenantChangeSetService.createChangeSet('initial-aws-setup');
@@ -218,17 +218,8 @@ export class ChangeSetService {
       const credentialComponentId = credentialResult.componentId!;
       console.log(`✅ Created AWS Credential component: ${credentialComponentId}`);
 
-      // 3. Create Region component
-      console.log('3. Creating Region component...');
-      const regionResult = await this.createTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, 'Region', 'tenant-aws-region');
-      if (!regionResult.success) {
-        throw new Error(`Failed to create Region: ${regionResult.error}`);
-      }
-      const regionComponentId = regionResult.componentId!;
-      console.log(`✅ Created Region component: ${regionComponentId}`);
-
-      // 4. Create AWS Credential secret
-      console.log('4. Creating AWS Credential secret...');
+      // 3. Create AWS Credential secret
+      console.log('3. Creating AWS Credential secret...');
       const secretResult = await this.createTenantSecret(tenantWorkspaceId, tenantApiToken, changeSetId, 'tenant-aws-credential', 'AWS Credential', {
         AssumeRole: `arn:aws:iam::${awsAccountId}:role/si-access-prod-manager`
       });
@@ -237,8 +228,8 @@ export class ChangeSetService {
       }
       console.log(`✅ Created AWS Credential secret`);
 
-      // 5. Update AWS Credential component with secret
-      console.log('5. Updating AWS Credential component with secret...');
+      // 4. Update AWS Credential component with secret
+      console.log('4. Updating AWS Credential component with secret...');
       const updateCredentialResult = await this.updateTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, credentialComponentId, {
         secrets: {
           'AWS Credential': 'tenant-aws-credential'
@@ -249,20 +240,27 @@ export class ChangeSetService {
       }
       console.log(`✅ Updated AWS Credential component with secret`);
 
-      // 6. Update Region component with region us-east-1
-      console.log('6. Updating Region component...');
-      const updateRegionResult = await this.updateTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, regionComponentId, {
-        properties: {
-          'region': 'us-east-1'
+      // 5. Create Region component with attributes
+      console.log('5. Creating Region component...');
+      const regionResult = await this.createTenantComponent(tenantWorkspaceId, tenantApiToken, changeSetId, 'Region', 'tenant-aws-region', {
+        attributes: {
+          '/domain/region': 'us-east-1',
+          '/secrets/credential': {
+            "$source": {
+              "component": "tenant-aws-credential",
+              "path": "/secrets/AWS Credential"
+            }
+          }
         }
       });
-      if (!updateRegionResult.success) {
-        throw new Error(`Failed to update Region: ${updateRegionResult.error}`);
+      if (!regionResult.success) {
+        throw new Error(`Failed to create Region: ${regionResult.error}`);
       }
-      console.log(`✅ Updated Region component with region: us-east-1`);
+      const regionComponentId = regionResult.componentId!;
+      console.log(`✅ Created Region component: ${regionComponentId}`);
 
-      // 7. Apply the changeset
-      console.log('7. Applying changeset in tenant workspace...');
+      // 6. Apply the changeset
+      console.log('6. Applying changeset in tenant workspace...');
       const applyResult = await tenantChangeSetService.applyChangeSet(changeSetId, 120);
       if (!applyResult.success) {
         throw new Error(`Failed to apply changeset: ${applyResult.error}`);
@@ -271,34 +269,57 @@ export class ChangeSetService {
 
       console.log(`🎉 Successfully seeded tenant workspace ${tenantWorkspaceId} with AWS credentials for account ${awsAccountId}`);
 
-      // 8. Run AWS Standard VPC template now that credentials are set up
-      console.log('8. Running AWS Standard VPC template in tenant workspace...');
+      // 7. Run AWS Standard VPC template now that credentials are set up
+      console.log('7. Running AWS Standard VPC template in tenant workspace...');
+      let vpcTemplateSuccess = false;
+      let vpcTemplateError = null;
+
       try {
-        const { runTemplate } = await import("@systeminit/template");
+        // Generate a unique key for this VPC deployment
+        const vpcKey = `${tenantWorkspaceId}-vpc-${Date.now()}`;
 
-        // Set the SI_API_TOKEN environment variable to the tenant workspace token
-        const originalToken = Deno.env.get("SI_API_TOKEN");
-        Deno.env.set("SI_API_TOKEN", tenantApiToken);
+        // Call the si-tmpl CLI via our wrapper script
+        // This properly initializes Context via the CLI's globalAction hook
+        const command = new Deno.Command("deno", {
+          args: [
+            "run",
+            "--allow-net",
+            "--allow-env",
+            "--allow-read",
+            "--allow-write",
+            "./src/si-templates/run-cli.ts",
+            "run",
+            "./src/si-templates/aws-standard-vpc.ts",
+            "--key",
+            vpcKey,
+            "--input",
+            "./src/si-templates/aws-standard-vpc-prod-input.yaml",
+          ],
+          env: {
+            ...Deno.env.toObject(),
+            SI_API_TOKEN: tenantApiToken,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        });
 
-        try {
-          // Generate a unique key for this VPC deployment
-          const vpcKey = `${tenantWorkspaceId}-vpc-${Date.now()}`;
+        const process = command.spawn();
+        const { code, stdout, stderr } = await process.output();
 
-          await runTemplate('./src/si-templates/aws-standard-vpc.ts', {
-            key: vpcKey,
-            input: './src/si-templates/aws-standard-vpc-prod-input.yaml',
-            dryRun: false
-          });
+        const stdoutText = new TextDecoder().decode(stdout);
+        const stderrText = new TextDecoder().decode(stderr);
+
+        if (stdoutText) console.log(stdoutText);
+        if (stderrText) console.error(stderrText);
+
+        if (code === 0) {
           console.log(`✅ VPC template executed successfully in tenant workspace`);
-        } finally {
-          // Restore original token
-          if (originalToken) {
-            Deno.env.set("SI_API_TOKEN", originalToken);
-          } else {
-            Deno.env.delete("SI_API_TOKEN");
-          }
+          vpcTemplateSuccess = true;
+        } else {
+          throw new Error(`Template execution failed with exit code ${code}`);
         }
       } catch (error: any) {
+        vpcTemplateError = error.message;
         console.warn(`⚠️ Warning: VPC template execution failed: ${error.message}`);
         // Don't fail the entire seeding process if VPC template fails
       }
@@ -310,7 +331,9 @@ export class ChangeSetService {
           credentialComponentId,
           regionComponentId,
           awsAccountId,
-          awsRegion: 'us-east-1'
+          awsRegion: 'us-east-1',
+          vpcTemplateSuccess,
+          vpcTemplateError
         }
       };
 

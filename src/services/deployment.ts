@@ -265,12 +265,23 @@ export class DeploymentService {
           if (stacksetResult.success) {
             await updateProgress('stackset-creation', 'completed', `StackSet changeset created and applied: ${stacksetResult.changeSetId}`);
 
-            // Step 10: Seed tenant workspace with AWS credentials and run VPC template
-            await updateProgress('tenant-seeding', 'in_progress', 'Seeding tenant workspace with AWS credentials and VPC...');
+            // Step 10: Seed tenant workspace with AWS credentials and region
+            await updateProgress('tenant-seeding', 'in_progress', 'Seeding tenant workspace with AWS credentials and region...');
             try {
               const seedResult = await this.changeSetService.seedTenantWorkspace(workspaceData.workspaceId, workspaceData.token, awsAccountId);
               if (seedResult.success) {
-                await updateProgress('tenant-seeding', 'completed', 'Tenant workspace seeded with AWS credentials, region, and VPC');
+                await updateProgress('tenant-seeding', 'completed', 'Tenant workspace seeded with AWS credentials and region');
+
+                // Step 11: Run VPC template
+                await updateProgress('vpc-template', 'in_progress', 'Running AWS Standard VPC template...');
+                if (seedResult.data?.vpcTemplateSuccess) {
+                  await updateProgress('vpc-template', 'completed', 'AWS Standard VPC template executed successfully');
+                } else if (seedResult.data?.vpcTemplateError) {
+                  await updateProgress('vpc-template', 'failed', `VPC template failed: ${seedResult.data.vpcTemplateError}`);
+                  console.warn(`Warning: VPC template failed: ${seedResult.data.vpcTemplateError}`);
+                } else {
+                  await updateProgress('vpc-template', 'completed', 'VPC template execution skipped or status unknown');
+                }
               } else {
                 await updateProgress('tenant-seeding', 'failed', `Tenant seeding failed: ${seedResult.error}`);
                 console.warn(`Warning: Tenant seeding failed: ${seedResult.error}`);
